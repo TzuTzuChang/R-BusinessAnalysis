@@ -1,0 +1,318 @@
+---
+title: "A/B Testing"
+author: "Amber Chang"
+date: "2019/8/3"
+output: 
+  html_document:
+    toc: true
+    toc_depth: 2
+    toc_float:
+      collapsed: false
+      smooth_scroll: false
+---
+
+## **資料輸入與前處理**
+
+---
+```{r}
+library("tidyverse")
+```
+
+```{r, results = "hide"}
+setwd('C:/Users/TzuTzu/Desktop/ri/abtesting') #設定工作目錄
+test.table <- read_csv("test_table.csv")
+```
+
+```{r}
+user.table <- read_csv("user_table.csv")
+```
+
+```{r}
+#查看table資訊，只會顯示前6筆
+#data交易日期, device設備, test有無測試(0為對照組，灰色按鈕, 1為測試組，綠色按鈕), purchase_amount購買金額
+head(test.table)
+```
+
+```{r}
+#gender性別, service會員階級
+head(user.table)
+```
+
+---
+
+## **資料驗證**
+
+---
+
+ - 因為希望能合併使用者資料與實驗資料，但擔心測試的使用者其實沒有相關之使用者資料，故需先確認二個資料表的人數
+ 
+由結果可知：
+
+   - user.table 中有20000個不重複使用者
+
+   - test.table 中有19871個不重複使用者
+ 
+   - 同時出現在二個表格中有19871個不重複使用者
+ 
+→ 即每個測試使用者都有對應之相關資料。
+```{r}
+#計算uesr.table有多少個不重複使用者
+#nrow計算row數, unique不重複
+print(paste("user_table 中不重複使用者數量:",
+            nrow(unique(select(user.table, user_id)))))
+```
+
+```{r}
+print(paste("test_table 中不重複使用者數量:",
+            nrow(unique(select(test.table, user_id)))))
+```
+
+```{r}
+#以user_id將test.table和user.table取交集
+print(paste("重複出現在user_table與test_table中不重複使用者數量:",
+            nrow(unique(
+              inner_join(select(test.table, user_id),
+                         select(user.table, user_id),
+                         by = "user_id")))))
+```
+
+ - 接下來，驗證實驗組與對照組之數量有無平衡
+
+由結果可知，實驗組與對照組之次數，遠超過使用者數量。
+
+→ 故這次實驗，應是以「每次購物」作為一個Experiment Entitu(實驗個體)。
+```{r}
+print(paste("實驗組次數:",
+            sum(
+              unique(test.table)$test == 1)
+            ))
+```
+
+```{r}
+print(paste("對照組次數:",
+            sum(
+              unique(test.table)$test == 0)
+            ))
+```
+
+ - 確定實驗個體後，即可合併實驗表格與使用者資料
+
+→ 邏輯應為:test_table資料全都需要，user_table則不用全部需要，故採用`left_join`方式。
+```{r}
+#left_join保留所有左邊之值
+test.data <- left_join(test.table,
+                       user.table,
+                       by = "user_id")
+
+head(test.data)
+```
+
+ - 變數類別轉換
+ 
+上列結果顯示，其中data類別應為data(日期)，device、test、gender、service、country應為factor(因子)，故需做類別轉換。
+```{r}
+test.data$date <- as.Date(test.data$date, format = "%Y/%m/%d")
+
+#[[i]]將tibble資料抓出一個vector，需用二個[[]]，如果只用一個[]，抓出之資料仍為tibble
+for(i in c(3,4,6,7,9)){
+  test.data[, i] <- as.factor(test.data[[i]])
+}
+
+head(test.data)
+```
+
+ - 檢視敘述統計
+```{r}
+summary(test.data)
+```
+
+ - 比較每個維度差異
+ 
+1.實驗與對照組之差異
+
+由結果可知，改成綠色按鈕(test=1)是有好的結果。
+```{r}
+#使用`summarise`中的`mean`，計算平均購買金額
+test.data %>%
+  group_by(test) %>%
+  summarise(mean_purchase_amount = mean(purchase_amount))
+```
+
+2.設備間之差異
+```{r}
+test.data %>%
+  group_by(device) %>%
+  summarise(mean_purchase_amount = mean(purchase_amount))
+```
+
+3.性別差異
+```{r}
+test.data %>%
+  group_by(gender) %>%
+  summarise(mean_purchase_amount = mean(purchase_amount))
+```
+
+4.服務類型差異
+```{r}
+test.data %>%
+  group_by(service) %>%
+  summarise(mean_purchase_amount = mean(purchase_amount))
+```
+
+5.國家差異
+```{r}
+test.data %>%
+  group_by(country) %>%
+  summarise(mean_purchase_amount = mean(purchase_amount))
+```
+
+6.國家與實驗之交互影響
+
+由結果可知，在每個國家中，test=1幾乎都比test=0有較高之平均購買金額，只有在日本反過來，為交互作用。
+```{r}
+#因為要計算二者間之影響，故`group_by`需加入二個變數
+test.data %>%
+  group_by(country, test) %>%
+  summarise(mean_purchase_amount = mean(purchase_amount))
+```
+
+---
+
+## **資料分析**
+
+---
+
+### **獨立樣本T檢定**
+
+**獨立樣本T檢定** - 用以檢視實驗組與對照組是否有不同結果。
+
+    假設x為購買金額，
+    測試組~常態分配, 對照組~常態分配
+    希望檢驗
+    虛無假設:測試組平均購買金額 - 對照組平均購買金額≦0 v.s 對立假設:測試組平均購買金額 - 對照組平均購買金額＞0
+
+由結果可知，p-value非常小，即可拒絕虛無假設，表實驗組平均數>對照組平均數。    
+```{r}
+#alternative = "greater", 對立假設>0
+#alternative = "less", 對立假設<0
+#alternative = "on-equal", 對立假設=0
+t.test(test.data[test.data$test == 1, ]$purchase_amount, #測試組的購買金額
+       test.data[test.data$test == 0, ]$purchase_amount,
+       alternative = "greater")
+```
+
+### **變異數分析**
+
+**變異數分析** - 瞭解因子是否會影響目標。
+
+→ p-value<0.05或有***者，表有顯著差異
+
+由結果可知，test.country.device.country會影響購買金額。
+```{r}
+#反映變數 ~ 解釋變數
+#如果是單因子，~ 後填入一個變數即可
+#test.data為資料來源
+aov.model <- aov(
+  purchase_amount ~ test + country + device + gender + service,
+  test.data)
+summary(aov.model)
+```
+
+### **交互作用**
+
+**交互作用** - 瞭解某因子與其他因素是否會互相影響。
+
+由結果可知，test與country有明顯交互作用。
+```{r}
+interaction.model <- aov(
+  purchase_amount ~ test*country + test*device + test*service,
+  test.data)
+summary(interaction.model)
+```
+
+### **最終模型**
+
+**最終模型** - 建立最能捕捉結果之交互模型。
+```{r}
+interaction.model <- aov(
+  purchase_amount ~ test*country + device + service, #~ 後只留有顯著差異的
+  test.data)
+summary(interaction.model)
+```
+
+### **事後檢定**
+
+**Turkey事後檢定** - 瞭解每個因子的影響程度。
+
+由結果可知，信賴區間非常窄，表示1與0差很多。
+```{r}
+#TukeyHSD(最終模型, 想要觀察之因子)
+#diff為1-0之平均差異
+#lwr, upr為95%信賴區間
+TukeyHSD(interaction.model, "test")
+```
+
+```{r}
+TukeyHSD(interaction.model, "country")
+```
+
+ - 視覺化Tukey檢定
+ 
+```{r}
+plot(TukeyHSD(interaction.model, "country"))
+```
+
+---
+
+## **視覺化結果呈現**
+
+---
+
+### **實驗組與對照組是否有顯著差異**
+
+ - 以**時間序列**，呈現每日差別
+```{r}
+#計算每個日期，實驗組與對照組之平均購買金額
+daily.purchase <- test.data %>%
+  group_by(date, test) %>%
+  summarise(purchase_amount = mean(purchase_amount))
+
+ggplot(daily.purchase, aes(x = date, y = purchase_amount, colour = test)) + 
+  geom_point() + geom_line() +
+  xlab("Date") + ylab("Purchase Amount") + ylim(c(30, 50)) +
+  ggtitle("Time Series Plot of Purchase Amount: Test versus Control") +
+  theme_bw()
+```
+
+ - 以**密度圖**，呈現一個月二族群之差別
+```{r}
+#fill = test以test去填滿, colour = test以test去區分顏色
+ggplot(test.data, aes(purchase_amount, fill = test, colour = test)) + 
+  geom_density(alpha = 0.3) +
+  xlab("Purchase Amount") + ylab("Density") +
+  ggtitle("Density Plot of Purchase Amount: Test versus Control") +
+  theme_bw()
+```
+
+### **哪些因素會影響使用者之消費金額**
+
+建議使用baxplot(盒狀圖)或density plot(機率密度圖)視覺化影響因素
+```{r}
+ggplot(test.data, aes(x = country, y = purchase_amount)) + #x軸一定要是因子的變數
+  geom_boxplot() +
+  xlab("Country") + ylab("Purchase Amount") +
+  ggtitle("Boxplot of Purchase Amount by Country") +
+  theme_bw()
+```
+
+### **哪些因素存在交互作用**
+
+由結果得知，日本實驗和對照組與他國相反。
+→ 如果要在日本有高購買金額，不要改掉原先之按鈕顏色。
+```{r}
+ggplot(test.data, aes(x = country, y = purchase_amount, colour = test)) + #用顏色區分實驗與對照組
+  geom_boxplot() +
+  xlab("Country") + ylab("Purchase Amount") +
+  ggtitle("Boxplot of Purchase Amount by Country: Test versus Control") +
+  theme_bw()
+```
