@@ -1,0 +1,319 @@
+---
+title: "PCA"
+author: "Amber Chang"
+date: "2019/8/3"
+output: 
+  html_document:
+    toc: true
+    toc_depth: 2
+    toc_float:
+      collapsed: false
+      smooth_scroll: false
+---
+
+## **資料輸入與前處理**
+
+---
+
+```{r}
+# Required Library
+library("tidyverse")
+```
+
+```{r}
+setwd("C:/Users/TzuTzu/Desktop/ri/pca")
+financial.data <- read_csv("2017_financial index_163 comp.csv")
+```
+
+```{r}
+#roe權益報酬率, roa資產報酬率
+head(financial.data, 5)
+```
+
+---
+
+## **資料探索**
+
+---
+
+由結果可知，roe之Max表示，此公司每募得一塊錢之股數，可賺0.37元。
+
+profit_margin_rate - 每銷售一元，可得之獲利。profit_margin_rate之Min表示，每銷售1元，賠2元。
+
+debt_ratio - 負債比。debt_ratio之Min表示，總資產之0.97%為負債買來的。
+```{r}
+summary(financial.data[, 2:ncol(financial.data)])
+```
+
+### **相關係數**
+
+**相關係數** - 了解變數間彼此之相關程度。 
+```{r}
+cor(financial.data[, 2:ncol(financial.data)])
+```
+
+**視覺化相關係數** - 喜歡使用**heatmap(熱圖)**視覺化變數相知相關程度。
+
+ - 如果要使用`ggplot2`繪製相關係數之熱圖，需先將資料整理成tidy(變數1-變數2-相關係數)之資料架構
+
+→ **矩陣格式轉成tidy** - 利用`reshape2`套件中的`melt`函數。
+```{r}
+#value為相關係數
+library(reshape2)
+head(melt(cor(financial.data[, 2:ncol(financial.data)])), 5)
+```
+
+**相關係數熱圖**
+
+由結果可知，
+
+1.盈利能力變數彼此間高度相關。
+ 
+2.營業費用率顯然與盈利能力負相關。
+```{r}
+ggplot(melt(cor(financial.data[, 2:ncol(financial.data)])),
+       aes(Var1, Var2)) + #aes(橫軸, 縱軸)
+  geom_tile(aes(fill = value), colour = "white") + #colour格子外框
+
+#fill裡如何上色, scale_fill_gradient2漸層色
+  scale_fill_gradient2(low = "firebrick4", high = "steelblue", #firebrick4深紅, steelblue深藍
+                       mid = "white", midpoint = 0) + #midpoint中間點定義之值
+
+#ggplot2索引
+  guides(fill=guide_legend(title="Correlation")) + #guide_legend圖標
+  theme_bw() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1, vjust = 1),
+        axis.title = element_blank())
+```
+
+---
+
+## **資料探索**
+
+---
+
+### **主成分分析**
+
+```{r}
+pca.model <- prcomp(financial.data[, 2:ncol(financial.data)], scale = T) #scale = T,將資料先標準化
+
+#sdev每PCA可解釋的變異數
+#rotation係數矩陣
+#center標準化後變數之中心
+#scale 變數尺度
+names(pca.model)
+```
+
+ - 透過`summary`函數，查看主成份分析每個主成分之解釋變異程度
+
+由結果可知，只要六個主成份就能解釋80%的資料變異P。
+```{r}
+summary(pca.model)
+```
+
+ - 可透過解釋變異/累積解釋比率圖，選取主成份
+
+ - var -主成份解釋多少變異數
+ 
+ - prop - 主成份解釋變異數比率=PC變異數/總變異
+ 
+ - cum_prop - 該主成份解釋多少變異數之累積比率
+ 
+由於`pac.model`只能抓出每個PC的標準差`pca.model$sdev`。
+
+ → 需建立以下表格，計算上述各值。
+```{r}
+var.exp <- tibble(
+  pc = paste0("PC_", formatC(1:16, width=2, flag="0")), #pc主成份
+  var = pca.model$sdev^2, #var便異數
+  prop = (pca.model$sdev)^2 / sum((pca.model$sdev)^2), #prop該主成份之解釋變異數
+  cum_prop = cumsum((pca.model$sdev)^2 / sum((pca.model$sdev)^2))) #cum_prop累積比率
+
+head(var.exp, 5)
+```
+
+```{r}
+library(plotly)
+```
+
+### **解釋變異條狀圖**
+
+由結果可知，取前六個主成份即可。
+```{r}
+plot_ly(
+  x = var.exp$pc,
+  y = var.exp$var,
+  type = "bar"
+) %>%
+  layout(
+    title = "Variance Explained by Each Principal Component",
+    xaxis = list(type = 'Principal Component', tickangle = -60),
+    yaxis = list(title = 'Variance'),
+    margin = list(r = 30, t = 50, b = 70, l = 50)
+  )
+```
+
+```{r}
+plot_ly(
+  x = var.exp$pc,
+  y = var.exp$cum_prop,
+  type = "bar"
+) %>%
+  layout(
+    title = "Cumulative Proportion by Each Principal Component",
+    xaxis = list(type = 'Principal Component', tickangle = -60),
+    yaxis = list(title = 'Proportion'),
+    margin = list(r = 30, t = 50, b = 70, l = 50)
+  )
+```
+
+### **主成份係數矩陣**
+
+**主成份係數矩陣** - 更仔細了解每個主成份之係數，以便解釋主成份內容
+```{r}
+head(pca.model$rotation, 5)
+```
+
+**主成份係數矩陣熱圖**
+```{r}
+ggplot(melt(pca.model$rotation[, 1:6]), aes(Var2, Var1)) +
+  geom_tile(aes(fill = value), colour = "white") +
+  scale_fill_gradient2(low = "firebrick4", high = "steelblue",
+                       mid = "white", midpoint = 0) +
+  guides(fill=guide_legend(title="Coefficient")) +
+  theme_bw() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1, vjust = 1),
+        axis.title = element_blank())
+```
+
+### **非負稀疏主成分分析**
+
+**非負稀疏主成分分析** - 由於原先的主成份很解釋，改採用非負稀疏主成份分析
+
+ → 利用`nsprcomp`套件中之`nscumcomp`
+ 
+ - k:非0係數個數，通常是「每個主成份期待非0係數個數(=希望每個PCA有幾個變數)」*變數個數
+ 
+ - nneg:是否希望所有係數都是負的，nneg = T即有非負限制
+```{r}
+set.seed(1234)
+#install.packages("nsprcomp")
+library(nsprcomp)
+
+#k可選80~100之間
+nspca.model <- nscumcomp(
+  financial.data[, 2:17], 
+  k = 90, nneg = T,
+  scale. = T)
+
+```
+
+```{r}
+var.exp <- tibble(
+  pc = paste0("PC_", formatC(1:16, width=2, flag="0")),
+  var = nspca.model$sdev^2,
+  prop = (nspca.model$sdev)^2 / sum((nspca.model$sdev)^2),
+  cum_prop = cumsum((nspca.model$sdev)^2 / sum((nspca.model$sdev)^2)))
+
+head(var.exp, 5)
+```
+
+ - 可透過解釋變異與累積比率決定主成份個數
+ 
+由圖可知，可採用8個主成份。
+```{r}
+library(plotly)
+
+plot_ly(
+  x = var.exp$pc,
+  y = var.exp$var,
+  type = "bar"
+) %>%
+  layout(
+    title = "Variance Explained by Each Principal Component",
+    xaxis = list(type = 'Principal Component', tickangle = -60),
+    yaxis = list(title = 'Variance'),
+    margin = list(r = 30, t = 50, b = 70, l = 50)
+  )
+```
+
+```{r}
+plot_ly(
+  x = var.exp$pc,
+  y = var.exp$cum_prop,
+  type = "bar"
+) %>%
+  layout(
+    title = "Cumulative Proportion by Each Principal Component",
+    xaxis = list(type = 'Principal Component', tickangle = -60),
+    yaxis = list(title = 'Proportion'),
+    margin = list(r = 30, t = 50, b = 70, l = 50)
+  )
+```
+
+**非負稀疏主成份之係數權重熱圖**
+
+ - 主成份1重點為「股東權益獲利與成長能力」
+ 
+ - 主成份2重點為「資產獲利能力」
+  
+ - 主成份3重點為「毛利與週轉率」
+```{r}
+ggplot(melt(nspca.model$rotation[, 1:8]), aes(Var2, Var1)) +
+  geom_tile(aes(fill = value), colour = "white") +
+  scale_fill_gradient2(low = "white", high = "steelblue") +
+  guides(fill=guide_legend(title="Coefficient")) +
+  theme_bw() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1, vjust = 1),
+        axis.title = element_blank())
+```
+
+---
+
+## **公司個別分析**
+
+---
+
+ - 繪製「主成份分數」與「該主成份係數最大變數」之散佈圖，可找出幾種特別怪異之公司：
+ 
+ 看法 → 給定ROE，PC1特別卓越為6684安格
+        給定PC1，ROE超級低為6291沛亨
+        
+**主成份分數與該主成份係數最大變數之散佈圖**
+```{r}
+nspca.score <- data.frame(nspca.model$x) #nspca.model$x抓出PCA的分數
+
+#命名row
+row.names(nspca.score) <- financial.data$comp_id
+
+plot_ly(
+  x = nspca.score[, 1],
+  y = financial.data$roe,
+  text = financial.data$comp_id,
+  type = "scatter",
+  mode = "markers"
+) %>% layout(
+    title = "ROE v.s. PC 1 Score: Scatter Plot",
+    xaxis = list(title = 'Principal Component 1'),
+    yaxis = list(title = 'Return on Equity'),
+    margin = list(r = 30, t = 50, b = 70, l = 50)
+  )
+```
+
+ - 透過不同主成份散佈圖，也可找到很多面向都傑出之公司
+ 
+由圖可知，3529力旺, 6643丹星, 6684安格在「資產獲利能力」與「毛利率週轉率」特別傑出，值得關注。
+```{r}
+plot_ly(
+  x = nspca.score[, 2],
+  y = nspca.score[, 3],
+  text = financial.data$comp_id,
+  type = "scatter",
+  mode = "markers"
+) %>% layout(
+    title = "PC 2 v.s. PC 3 Score: Scatter Plot",
+    xaxis = list(title = 'Principal Component 2'),
+    yaxis = list(title = 'Principal Component 3'),
+    margin = list(r = 30, t = 50, b = 70, l = 50)
+  )
+```
