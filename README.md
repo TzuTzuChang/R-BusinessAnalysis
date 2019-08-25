@@ -4,7 +4,7 @@
 -> Getting initial knowledge of data.
 ### A/B Testing (統計實驗與測試)
 -> Comparing PlanA with PlanB in statistical experiment.
-### Principal Component Analysis, PCA (主成分分系)
+### Principal Component Analysis, PCA (主成分分析)
 -> Dimension reduction.
 ### Cluster analysis (集群分析)
 -> Collecting similar samples from the group and have highly different between different groups.
